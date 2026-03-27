@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"net/http"
+	"strings"
 	// TODO: Добавьте необходимые импорты:
 	// "context"
 	// "strings"
@@ -30,8 +32,26 @@ func AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		// - context.WithValue(r.Context(), "userID", claims.UserID)
 		// - next.ServeHTTP(w, r.WithContext(ctx))
 
-		// Временная заглушка - УДАЛИТЕ после реализации!
-		http.Error(w, "Middleware not implemented", http.StatusNotImplemented)
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
+			sendErrorResponse(w, "authorization header cannot be empty", 401)
+			return
+		}
+
+		parts := strings.Split(authHeader, " ")
+		if len(parts) != 2 || parts[0] != "Bearer" {
+			sendErrorResponse(w, "invalid authorization header format", 401)
+			return
+		}
+
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+		claims, err := ValidateToken(token)
+		if err != nil {
+			sendErrorResponse(w, "invalid token", 401)
+			return
+		}
+		ctx := context.WithValue(r.Context(), "userID", claims.UserID)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	}
 }
 
@@ -45,6 +65,10 @@ func GetUserIDFromContext(r *http.Request) (int, bool) {
 	// 3. Верните значение и булевый флаг успешности
 	//
 	// Пример: userID, ok := r.Context().Value("userID").(int)
+	userID, ok := r.Context().Value("userID").(int)
+	if !ok {
+		return 0, false
+	}
 
-	return 0, false
+	return userID, true
 }

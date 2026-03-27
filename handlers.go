@@ -2,9 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"regexp"
 )
 
 // RegisterHandler обрабатывает регистрацию нового пользователя
@@ -32,7 +34,56 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	// - 400 для невалидных данных, 409 для дубликатов, 500 для внутренних ошибок
 	// - Не забудьте установить Content-Type: application/json для ответа
 
-	http.Error(w, "Registration not implemented", http.StatusNotImplemented)
+	var registerRequest RegisterRequest
+
+	err := parseJSONRequest(r, &registerRequest)
+	if err != nil {
+		sendErrorResponse(w, err.Error(), 400)
+		return
+	}
+
+	err = validateRegisterRequest(&registerRequest)
+	if err != nil {
+		sendErrorResponse(w, err.Error(), 400)
+		return
+	}
+
+	emailIsDuplicate, err := UserExistsByEmail(registerRequest.Email)
+	if err != nil {
+		sendErrorResponse(w, err.Error(), 500)
+		return
+	}
+
+	if emailIsDuplicate {
+		sendErrorResponse(w, "duplicate email", 409)
+		return
+	}
+
+	usernameIsDuplicate, err := UserExistsByUsername(registerRequest.Username)
+	if err != nil {
+		sendErrorResponse(w, err.Error(), 500)
+		return
+	}
+
+	if usernameIsDuplicate {
+		sendErrorResponse(w, "duplicate username", 409)
+		return
+	}
+
+	hash, err := HashPassword(registerRequest.Password)
+	if err != nil {
+		sendErrorResponse(w, fmt.Sprintf("failed to hash password: %s", err.Error()), 400)
+	}
+
+	user, err := CreateUser(registerRequest.Email, registerRequest.Username, hash)
+
+	if errors.Is(err, CreateUserError) {
+		sendErrorResponse(w, err.Error(), 400)
+		return
+	}
+
+	token, err := GenerateToken(*user)
+	sendJSONResponse(w, AuthResponse{Token: token, User: *user}, 201)
 }
 
 // LoginHandler обрабатывает вход пользователя
@@ -58,7 +109,38 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 	// - Используйте HTTP статус 401 для неверных учетных данных
 	// - Не возвращайте password_hash в ответе
 
-	http.Error(w, "Login not implemented", http.StatusNotImplemented)
+	var loginRequest LoginRequest
+
+	err := parseJSONRequest(r, &loginRequest)
+	if err != nil {
+		sendErrorResponse(w, err.Error(), 400)
+		return
+	}
+
+	if loginRequest.Email == "" {
+		sendErrorResponse(w, "email is required", 400)
+		return
+	}
+
+	if loginRequest.Password == "" {
+		sendErrorResponse(w, "password is required", 400)
+		return
+	}
+
+	user, err := GetUserByEmail(loginRequest.Email)
+	if err != nil {
+		sendErrorResponse(w, "invalid email or password", 401)
+		return
+	}
+
+	isValidPwd := CheckPassword(loginRequest.Password, user.PasswordHash)
+	if !isValidPwd {
+		sendErrorResponse(w, "invalid email or password", 401)
+		return
+	}
+
+	token, err := GenerateToken(*user)
+	sendJSONResponse(w, AuthResponse{Token: token, User: *user}, 200)
 }
 
 // ProfileHandler возвращает профиль текущего пользователя
@@ -80,8 +162,20 @@ func ProfileHandler(w http.ResponseWriter, r *http.Request) {
 	// - Контекст уже должен содержать userID
 	// - Если пользователь не найден - верните 404
 	// - Не включайте password_hash в ответ
+	userID, found := GetUserIDFromContext(r)
+	if !found {
+		sendErrorResponse(w, "no user id provided", 400)
+		return
+	}
+	user, err := GetUserByID(userID)
+	if err != nil {
+		if err == FindUserError {
+			sendErrorResponse(w, "user not found", 404)
+			return
+		}
+	}
 
-	http.Error(w, "Profile not implemented", http.StatusNotImplemented)
+	sendJSONResponse(w, user, 200)
 }
 
 // HealthHandler проверяет состояние сервиса
@@ -107,7 +201,8 @@ func HealthHandler(w http.ResponseWriter, r *http.Request) {
 func sendJSONResponse(w http.ResponseWriter, data interface{}, statusCode int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	if err := json.NewEncoder(w).Encode(data); err != nil {
+	response := JsonResponse{StatusCode: statusCode, Data: data}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
 		log.Printf("Error encoding JSON response: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
@@ -117,7 +212,7 @@ func sendJSONResponse(w http.ResponseWriter, data interface{}, statusCode int) {
 func sendErrorResponse(w http.ResponseWriter, message string, statusCode int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	response := map[string]string{"error": message}
+	response := JsonError{Message: message, StatusCode: statusCode}
 	json.NewEncoder(w).Encode(response)
 }
 
@@ -150,6 +245,23 @@ func validateRegisterRequest(req *RegisterRequest) error {
 	// - Используйте ValidateEmail() и ValidatePassword() из auth.go
 	// - Проверьте длину username (например, минимум 3 символа)
 	// - Проверьте что username содержит только допустимые символы
+	err := ValidateEmail(req.Email)
+	if err != nil {
+		return err
+	}
+
+	err = ValidatePassword(req.Password)
+	if err != nil {
+		return err
+	}
+
+	if len(req.Username) < 3 {
+		return fmt.Errorf("username must be at least 3 characters long")
+	}
+
+	if !regexp.MustCompile(`^[a-zA-Z0-9_]+$`).MatchString(req.Username) {
+		return fmt.Errorf("username содержит недопустимые символы")
+	}
 
 	return nil
 }
