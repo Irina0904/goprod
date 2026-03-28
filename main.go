@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -44,7 +45,7 @@ func main() {
 	log.Printf("❤️  Health: GET http://localhost:%s/health", port)
 
 	server := &http.Server{
-		Addr: ":8080",
+		Addr: fmt.Sprintf(":%s", port),
 	}
 
 	go func() {
@@ -60,9 +61,9 @@ func main() {
 		}
 	}()
 
-	log.Println("server listening on :8080")
+	log.Printf("server listening on :%s\n", port)
 	if err := server.ListenAndServe(); err != nil {
-		log.Fatal(err)
+		log.Printf("HTTP server error: %v", err)
 	}
 }
 

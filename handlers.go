@@ -12,7 +12,7 @@ import (
 // RegisterHandler обрабатывает регистрацию нового пользователя
 func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		sendErrorResponse(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -73,23 +73,32 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	hash, err := HashPassword(registerRequest.Password)
 	if err != nil {
 		sendErrorResponse(w, fmt.Sprintf("failed to hash password: %s", err.Error()), 400)
+		return
 	}
 
 	user, err := CreateUser(registerRequest.Email, registerRequest.Username, hash)
 
-	if errors.Is(err, CreateUserError) {
-		sendErrorResponse(w, err.Error(), 400)
+	if err != nil {
+		if errors.Is(err, CreateUserError) {
+			sendErrorResponse(w, err.Error(), 400)
+			return
+		}
+		sendErrorResponse(w, err.Error(), 500)
 		return
 	}
 
 	token, err := GenerateToken(*user)
+	if err != nil {
+		sendErrorResponse(w, err.Error(), 500)
+		return
+	}
 	sendJSONResponse(w, AuthResponse{Token: token, User: *user}, 201)
 }
 
 // LoginHandler обрабатывает вход пользователя
 func LoginHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		sendErrorResponse(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -140,13 +149,17 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	token, err := GenerateToken(*user)
+	if err != nil {
+		sendErrorResponse(w, "invalid email or password", 500)
+		return
+	}
 	sendJSONResponse(w, AuthResponse{Token: token, User: *user}, 200)
 }
 
 // ProfileHandler возвращает профиль текущего пользователя
 func ProfileHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		sendErrorResponse(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -173,6 +186,8 @@ func ProfileHandler(w http.ResponseWriter, r *http.Request) {
 			sendErrorResponse(w, "user not found", 404)
 			return
 		}
+		sendErrorResponse(w, err.Error(), 500)
+		return
 	}
 
 	sendJSONResponse(w, user, 200)
@@ -183,7 +198,7 @@ func HealthHandler(w http.ResponseWriter, r *http.Request) {
 	// Проверяем подключение к БД
 	if db != nil {
 		if err := db.Ping(); err != nil {
-			http.Error(w, "Database connection failed", http.StatusServiceUnavailable)
+			sendErrorResponse(w, "Database connection failed", http.StatusServiceUnavailable)
 			return
 		}
 	}
@@ -204,7 +219,7 @@ func sendJSONResponse(w http.ResponseWriter, data interface{}, statusCode int) {
 	response := JsonResponse{StatusCode: statusCode, Data: data}
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		log.Printf("Error encoding JSON response: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		sendErrorResponse(w, "Internal server error", http.StatusInternalServerError)
 	}
 }
 

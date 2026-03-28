@@ -74,8 +74,11 @@ func CreateUser(email, username, passwordHash string) (*User, error) {
 
 	err := db.QueryRow(createUserQuery, email, username, passwordHash).Scan(&user.ID, &user.CreatedAt)
 
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, CreateUserError
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, CreateUserError
+		}
+		return nil, err
 	}
 
 	user.Email = email
